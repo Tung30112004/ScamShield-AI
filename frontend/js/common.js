@@ -341,29 +341,6 @@ function initReveal(root = document) {
   });
 }
 
-// Đếm số chạy lên cho các phần tử có data-count (định dạng số theo ngôn ngữ).
-const counterObs = "IntersectionObserver" in window ? new IntersectionObserver((entries) => {
-  entries.forEach((en) => {
-    if (!en.isIntersecting) return;
-    const el = en.target, end = +el.dataset.count, t0 = performance.now();
-    counterObs.unobserve(el);
-    if (prefersReducedMotion()) { el.textContent = fmt(end); el.dataset.counted = "1"; return; }
-    const step = (t) => {
-      const p = Math.min((t - t0) / 1400, 1);
-      el.textContent = fmt(Math.round(end * (1 - Math.pow(1 - p, 3))));
-      if (p < 1) requestAnimationFrame(step);
-      else el.dataset.counted = "1";
-    };
-    requestAnimationFrame(step);
-  });
-}) : null;
-function initCounters() {
-  $$("[data-count]").forEach((el) => {
-    if (counterObs) counterObs.observe(el);
-    else { el.textContent = fmt(+el.dataset.count); el.dataset.counted = "1"; }
-  });
-}
-
 // Đổi ngôn ngữ: cập nhật trạng thái AI, nhãn mạng xã hội và định dạng số đã đếm xong;
 // xoá thông báo cũ của trình đọc màn hình để không còn câu ở ngôn ngữ trước.
 Language.onChange(() => {
@@ -371,7 +348,6 @@ Language.onChange(() => {
   LangMenu.render();
   AiStatus.render();
   updateSocialLabels();
-  $$("[data-count][data-counted]").forEach((el) => { el.textContent = fmt(+el.dataset.count); });
 });
 Language.apply();
 initReveal();

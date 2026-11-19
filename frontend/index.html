@@ -38,7 +38,7 @@
             <span class="scan-input-icon" data-icon="link"></span>
             <input id="checkInput" name="url" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false"
               aria-describedby="checkError" data-i18n-placeholder="inputPlaceholder"
-              placeholder="Dán đường link, ví dụ: https://vietcombank-xacthuc.top/login">
+              placeholder="Dán đường link, ví dụ: https://example.com/path">
           </div>
           <button class="btn btn-scan" id="scanBtn" type="submit">
             <span class="btn-spinner" aria-hidden="true"></span>
@@ -54,14 +54,14 @@
           <li><span class="tick" data-icon="check"></span><span data-i18n="tick3">Không cần tạo tài khoản</span></li>
         </ul>
 
-        <!-- Bốn ô số liệu giữ nguyên nguồn của bản FE: hai bộ dữ liệu huấn luyện (số cố định)
-             + số thương hiệu (BRANDS_VN) và số từ khoá (SCAM_KEYWORDS) đếm từ js/dictionaries.js. -->
         <ul class="stats" data-i18n-aria-label="statsLabel">
-          <li class="stat"><span class="stat-icon" data-icon="database"></span><strong class="mono" data-count="53116">0</strong><span data-i18n="statPhishVN">bản ghi URL bối cảnh Việt Nam (PhishVN)</span></li>
-          <li class="stat"><span class="stat-icon" data-icon="globe"></span><strong class="mono" data-count="235795">0</strong><span data-i18n="statPhiUSIIL">URL lừa đảo &amp; hợp lệ quốc tế (PhiUSIIL)</span></li>
-          <li class="stat"><span class="stat-icon" data-icon="tag"></span><strong class="mono" id="statBrands" data-count="0">0</strong><span data-i18n="statBrands">thương hiệu được giám sát giả mạo</span></li>
-          <li class="stat"><span class="stat-icon" data-icon="book"></span><strong class="mono" id="statKeywords" data-count="0">0</strong><span data-i18n="statKeywords">từ khoá lừa đảo trong từ điển</span></li>
+          <li class="stat"><span class="stat-icon" data-icon="database"></span><strong class="mono" data-stat="phishing_urls">—</strong><span data-i18n="statStoredPhishing">URL độc hại trong dữ liệu</span></li>
+          <li class="stat"><span class="stat-icon" data-icon="globe"></span><strong class="mono" data-stat="legitimate_urls">—</strong><span data-i18n="statStoredLegitimate">URL hợp lệ trong dữ liệu</span></li>
+          <li class="stat"><span class="stat-icon" data-icon="tag"></span><strong class="mono" data-stat="total_urls">—</strong><span data-i18n="statStoredTotal">Tổng URL lưu trữ</span></li>
+          <li class="stat" aria-describedby="stats-ratio-note"><span class="stat-icon" data-icon="book"></span><strong class="mono" data-stat="malicious_ratio_percent">—</strong><span data-i18n="statMaliciousRatio">Tỷ lệ URL độc hại</span></li>
         </ul>
+        <p class="stats-note" id="stats-ratio-note" data-i18n="statsRatioNote">Tỷ lệ tính trên tổng số URL lưu trữ.</p>
+        <p class="stats-note" id="stats-status" role="status"></p>
       </div>
     </section>
 
@@ -96,12 +96,12 @@
           <li class="info-card step reveal">
             <div class="step-top"><span class="step-num mono">2</span><span class="card-icon" data-icon="radar"></span></div>
             <h3 data-i18n="how2Title">Phân tích rủi ro</h3>
-            <p data-i18n="how2Desc">Model AI ở máy chủ và bộ quy tắc trên trình duyệt cùng xem xét những tín hiệu có trong đường link và tên miền.</p>
+            <p data-i18n="how2Desc">Máy chủ tra cứu dữ liệu và dùng mô hình AI khi cần. Trình duyệt phân tích thêm các dấu hiệu trong URL.</p>
           </li>
           <li class="info-card step reveal">
             <div class="step-top"><span class="step-num mono">3</span><span class="card-icon" data-icon="shieldCheck"></span></div>
             <h3 data-i18n="how3Title">Nhận kết quả</h3>
-            <p data-i18n="how3Desc">Website hiển thị mức rủi ro, xác suất do model đưa ra và những dấu hiệu cần chú ý, kèm giải thích.</p>
+            <p data-i18n="how3Desc">Xem kết luận và nguồn từ máy chủ, cùng các dấu hiệu URL để tham khảo.</p>
           </li>
         </ol>
       </div>
@@ -112,7 +112,7 @@
       <div class="container">
         <div class="section-head reveal">
           <h2 id="examTitle" data-i18n="examTitle">ScamShield kiểm tra những yếu tố nào?</h2>
-          <p class="section-lead" data-i18n="examLead">Mỗi lần quét kết hợp nhiều nhóm tín hiệu khác nhau để đưa ra đánh giá.</p>
+          <p class="section-lead" data-i18n="examLead">Kết quả đến từ máy chủ. Các dấu hiệu trên trình duyệt cung cấp thêm thông tin về URL.</p>
         </div>
         <ul class="grid cards-4">
           <li class="info-card feature reveal">
@@ -181,7 +181,6 @@
   <script src="js/dictionaries.js"></script>
   <script src="js/url-analyzer.js"></script>
   <script src="js/api.js"></script>
-  <script src="js/data.js"></script>
   <script src="js/language.js"></script>
   <script src="js/common.js"></script>
   <script src="js/scan.js"></script>

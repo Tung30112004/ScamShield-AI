@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Báo cáo đường link đáng ngờ – ScamShield-AI</title>
-  <meta name="description" content="Lưu lại đường link có dấu hiệu lừa đảo ngay trên trình duyệt của bạn để được cảnh báo khi quét lại.">
+  <meta name="description" content="Lưu và xem lại báo cáo cá nhân trên trình duyệt này.">
   <meta name="theme-color" content="#0b1533">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z' fill='%231e40af'/%3E%3Ccircle cx='16' cy='15' r='3' fill='%23fff'/%3E%3C/svg%3E">
   <script>document.documentElement.classList.add("js");try{var l=localStorage.getItem("scamshield_language");if(l==="en"||l==="vi")document.documentElement.lang=l}catch(e){}</script>
@@ -26,7 +26,7 @@
       </div>
       <div class="container page-hero-inner">
         <h1 id="reportTitle" data-i18n="reportTitle">Báo cáo đường link đáng ngờ</h1>
-        <p class="hero-lead" data-i18n="reportLead">Chia sẻ đường link có dấu hiệu lừa đảo để bạn có thể lưu lại thông tin cảnh báo.</p>
+        <p class="hero-lead" data-i18n="reportLead">Lưu đường link đáng ngờ và ghi chú của bạn ngay trên trình duyệt này.</p>
       </div>
     </section>
 
@@ -43,7 +43,7 @@
             <div class="input-icon">
               <span data-icon="link"></span>
               <input id="rfUrl" name="subject" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" required
-                aria-describedby="rfUrlHint subjectError" data-i18n-placeholder="rfUrlPh" placeholder="Ví dụ: https://tenmien-dang-ngo.top/dang-nhap">
+                aria-describedby="rfUrlHint subjectError" data-i18n-placeholder="rfUrlPh" placeholder="Ví dụ: https://example.com/path">
             </div>
             <p class="field-hint" id="rfUrlHint" data-i18n="rfUrlHint">Dán nguyên đường link, gồm cả đường dẫn nếu có.</p>
             <p class="field-msg" id="subjectError" hidden><span data-icon="alert"></span><span></span></p>
@@ -70,7 +70,7 @@
           </div>
 
           <div class="rc-actions">
-            <button class="btn btn-report btn-lg" type="submit"><span data-icon="flag"></span><span data-i18n="rfSubmit">Gửi báo cáo</span></button>
+            <button class="btn btn-report btn-lg" type="submit"><span data-icon="flag"></span><span data-i18n="rfSubmit">Lưu báo cáo</span></button>
           </div>
 
           <p class="form-fail" id="reportFail" role="alert" hidden><span data-icon="alert"></span><span data-i18n="rfSaveFail">Không lưu được báo cáo – trình duyệt đang chặn bộ nhớ cục bộ (localStorage).</span></p>
@@ -78,7 +78,7 @@
             <span class="fs-icon" data-icon="shieldCheck"></span>
             <div>
               <h3 data-i18n="rfSuccessTitle">Đã lưu báo cáo trên trình duyệt này</h3>
-              <p data-i18n="rfSuccessBody">ScamShield-AI chưa có máy chủ tiếp nhận báo cáo, vì vậy báo cáo chưa được gửi đi đâu. Khi bạn quét lại tên miền này trên trình duyệt này, nó sẽ được đánh dấu nguy hiểm.</p>
+              <p data-i18n="rfSuccessBody">Bạn có thể xem lại báo cáo trên trình duyệt này. Khi quét lại cùng URL, báo cáo xuất hiện dưới dạng thông tin tham khảo.</p>
               <a id="reportSuccessScan" href="index.html"><span data-i18n="rfSuccessScan">Quét lại đường link vừa báo cáo</span> <span data-icon="arrowRight"></span></a>
             </div>
           </div>
@@ -93,7 +93,7 @@
             </li>
             <li>
               <span class="card-icon" data-icon="shieldCheck"></span>
-              <div><h3 data-i18n="aside2Title">Cảnh báo khi quét lại</h3><p data-i18n="aside2Desc">Tên miền bạn đã báo cáo luôn được đánh dấu nguy hiểm khi quét lại trên trình duyệt này.</p></div>
+              <div><h3 data-i18n="aside2Title">Tham khảo khi quét lại</h3><p data-i18n="aside2Desc">Khi quét lại cùng URL, bạn có thể xem ghi chú rằng URL này đã được báo cáo trên trình duyệt.</p></div>
             </li>
             <li>
               <span class="card-icon" data-icon="bank"></span>
@@ -104,6 +104,13 @@
               </div>
             </li>
           </ul>
+          <details id="savedReports" class="di saved-reports">
+            <summary><span data-icon="monitor"></span><span data-i18n="savedReportsTitle">Báo cáo đã lưu</span></summary>
+            <div class="di-body">
+              <p id="savedReportsEmpty" data-i18n="savedReportsEmpty">Chưa có báo cáo trên trình duyệt này.</p>
+              <ul id="savedReportsList" class="r-list"></ul>
+            </div>
+          </details>
           <a class="btn btn-ghost aside-scan" href="index.html#kiem-tra"><span data-icon="search"></span><span data-i18n="asideScan">Chưa chắc chắn? Quét đường link trước</span></a>
         </aside>
       </div>
@@ -115,7 +122,7 @@
   <script src="js/dictionaries.js"></script>
   <script src="js/url-analyzer.js"></script>
   <script src="js/api.js"></script>
-  <script src="js/data.js"></script>
+  <script src="js/report-categories.js"></script>
   <script src="js/language.js"></script>
   <script src="js/common.js"></script>
   <script src="js/report.js"></script>

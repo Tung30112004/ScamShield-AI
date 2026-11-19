@@ -1,6 +1,9 @@
+from os import getenv
+
 from supabase import create_client, Client
 
 from env_config import get_supabase_config, supabase_key_kind
+from api_protection import log_failure, logger
 
 # --- 1. LOAD CẤU HÌNH BIẾN MÔI TRƯỜNG ---
 # SUPABASE_URL / SUPABASE_KEY (tên cũ EXPO_PUBLIC_SUPABASE_* vẫn được đọc), xem env_config.py
@@ -23,23 +26,36 @@ DB_CLIENT_OPTIONS = dict(
 try:
     if not SUPABASE_URL or not SUPABASE_KEY:
         missing = [n for n, v in (("SUPABASE_URL", SUPABASE_URL), ("SUPABASE_KEY", SUPABASE_KEY)) if not v]
-        print(f"⚠️ CẢNH BÁO: Chưa cấu hình {', '.join(missing)} — bỏ qua tra cứu Database Supabase")
+        logger.warning("supabase_disabled missing=%s", ",".join(missing))
         supabase: Client = None
     else:
         from supabase import ClientOptions
 
         key_kind = supabase_key_kind(SUPABASE_KEY)
         if key_kind in ("secret", "service_role"):
-            print(f"⚠️ CẢNH BÁO: SUPABASE_KEY là key quyền cao ({key_kind}) — backend chỉ cần quyền đọc, "
-                  "nên dùng key sb_publishable_…")
+            logger.warning("supabase_key_privileged kind=%s", key_kind)
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY,
                                          options=ClientOptions(**DB_CLIENT_OPTIONS))
-        print(f"✅ Kết nối Database Supabase thành công! (key: {key_kind})")
-except Exception as e:
-    print(f"❌ Lỗi kết nối Database: {e}")
+        logger.info("supabase_client_initialized key_kind=%s", key_kind)
+except Exception as exc:
+    log_failure("supabase_init_failed", exc)
     supabase = None
 
 # --- 3. CÁC HÀM TRA CỨU DANH SÁCH ---
+
+def fetch_public_stats():
+    """Read storage totals using the public database role."""
+    if supabase is None or supabase_key_kind(SUPABASE_KEY) not in ("publishable", "anon"):
+        return None
+    # Enable v1 only after reviewing its SQL for full-table counts, independent of caller RLS.
+    use_v1 = getenv("SCAMSHIELD_STATS_V1_CONFIRMED", "").strip().lower() == "true"
+    rpc = "scamshield_public_stats" if use_v1 else "scamshield_stored_stats"
+    try:
+        return supabase.rpc(rpc, get=True).execute().data
+    except Exception as exc:
+        log_failure("supabase_stats_lookup_failed", exc)
+        return None
+
 
 def check_url_in_db(url: str):
     """
@@ -65,6 +81,6 @@ def check_url_in_db(url: str):
             return {**result, "source": "database_whitelist"}
             
         return None
-    except Exception as e:
-        print(f"⚠️ Lỗi khi tra cứu Database: {e}")
+    except Exception as exc:
+        log_failure("supabase_lookup_failed", exc)
         return None

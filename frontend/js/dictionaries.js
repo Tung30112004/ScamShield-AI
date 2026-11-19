@@ -1,7 +1,7 @@
 // Từ điển dùng cho bộ phân tích URL (tương ứng brands_vn.txt / scam_keywords_vn.txt trong tài liệu dự án).
 // Tất cả viết thường, không dấu.
 
-// Thương hiệu hay bị giả mạo + tên miền chính thức.
+// Bí danh thương hiệu và tên miền tham chiếu từ bộ dữ liệu hiện có.
 // keys: các chuỗi nhận diện thương hiệu trong URL. Key <= 4 ký tự chỉ được tính khi đứng thành từ riêng.
 const BRANDS_VN = [
   // Ngân hàng
@@ -86,21 +86,25 @@ const COMMON_WORDS = [
   "vn", "viet", "nam", "vietnam", "my", "id", "user", "page", "www", "mail",
 ];
 
-// Đuôi tên miền nhiều cấp (rút gọn từ Public Suffix List). Đuôi 1 cấp được xử lý mặc định.
+// Danh sách suffix tham khảo, không đầy đủ. Mục chưa nhận diện không được suy ra ranh giới miền.
 const PUBLIC_SUFFIXES = [
+  "com", "net", "org", "edu", "gov", "vn", "io", "app", "dev", "me", "co", "ly", "id", "at", "gy",
+  "top", "xyz", "click", "icu", "cyou", "sbs", "cfd", "buzz", "rest", "bond", "monster", "lol",
+  "online", "site", "live", "vip", "shop", "store", "fun", "space", "website", "work", "link", "info", "life", "asia",
   "com.vn", "net.vn", "org.vn", "edu.vn", "gov.vn", "ac.vn", "info.vn", "biz.vn", "name.vn",
   "pro.vn", "health.vn", "int.vn", "id.vn", "io.vn",
   "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "co.jp", "co.kr", "com.cn",
   "com.sg", "com.my", "co.th", "co.id", "com.br", "co.in", "com.tw", "com.hk", "com.ph",
-  // Nền tảng cho người dùng tự tạo trang (private suffix) – mỗi trang con là một "chủ" khác nhau.
+];
+
+// Phân tích ranh giới tên miền trên các nền tảng có tên miền con do người dùng tạo.
+const HOSTING_PLATFORMS = [
   "web.app", "firebaseapp.com", "pages.dev", "workers.dev", "r2.dev", "github.io", "vercel.app",
   "netlify.app", "blogspot.com", "weebly.com", "wixsite.com", "glitch.me", "ngrok.io",
   "ngrok-free.app", "onrender.com", "herokuapp.com", "repl.co", "000webhostapp.com",
 ];
 
-// Nền tảng tạo trang miễn phí (thường bị dùng để host trang giả mạo).
-const HOSTING_PLATFORMS = PUBLIC_SUFFIXES.slice(PUBLIC_SUFFIXES.indexOf("web.app"));
-// Trang do người dùng tạo nằm dưới tên miền lớn – không được hưởng độ tin cậy của tên miền đó.
+// Các host có nội dung do người dùng tạo mà không tách tenant theo suffix.
 const USER_CONTENT_HOSTS = ["sites.google.com", "docs.google.com", "forms.gle", "script.google.com"];
 
 // Dịch vụ rút gọn link.
@@ -109,10 +113,10 @@ const SHORTENERS = [
   "tiny.cc", "ow.ly", "s.id", "v.gd", "rebrand.ly", "t.ly",
 ];
 
-// Đuôi tên miền thường bị lạm dụng (trọng số).
-const TLD_RISK = {
-  top: 1.5, xyz: 1.5, click: 1.5, icu: 1.5, cyou: 1.5, sbs: 1.5, cfd: 1.5, buzz: 1.5, tk: 1.5,
-  ml: 1.5, ga: 1.5, cf: 1.5, gq: 1.5, rest: 1.2, bond: 1.2, monster: 1.2, lol: 1.2,
-  online: 1.0, site: 1.0, live: 1.0, vip: 1.0, shop: 0.8, store: 0.8, fun: 1.0, space: 1.0,
-  website: 1.0, pw: 1.0, work: 0.8, link: 1.0, info: 0.8, cc: 0.8, life: 0.6, asia: 0.6,
-};
+// Tín hiệu ngữ cảnh với trọng số thấp; không dùng để phân loại URL.
+const TLD_RISK = new Set([
+  "top", "xyz", "click", "icu", "cyou", "sbs", "cfd", "buzz", "tk",
+  "ml", "ga", "cf", "gq", "rest", "bond", "monster", "lol", "online",
+  "site", "live", "vip", "shop", "store", "fun", "space", "website", "pw",
+  "work", "link", "info", "cc", "life", "asia",
+]);

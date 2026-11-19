@@ -1,10 +1,4 @@
-// Trang báo cáo: form báo cáo đường link đáng ngờ (chỉ URL), lưu trên trình duyệt.
-//
-// Giữ cơ chế lưu của ScamShield-AI-fe: localStorage key "scamshield_reports", mỗi báo cáo
-// { type, target, category, desc, at }. Báo cáo mới luôn có type: "url"; báo cáo cũ (mọi type) được giữ nguyên.
-// js/scan.js đọc các báo cáo type "url" để đánh dấu nguy hiểm khi quét lại trên trình duyệt này.
-// Chưa có backend nhận báo cáo → không gửi đi đâu và thông báo đúng như vậy.
-// Đã bỏ danh sách "Báo cáo gần đây" và dữ liệu mẫu của nó.
+// Lưu và hiển thị báo cáo cá nhân trong trình duyệt.
 
 (() => {
   const REPORTS_KEY = "scamshield_reports";
@@ -16,23 +10,59 @@
   const success = $("#reportSuccess");
   const failMsg = $("#reportFail");
 
-  // Hình thức lừa đảo: thêm một mục dành riêng cho website giả mạo, sau đó là SCAM_TYPES (js/data.js).
-  // Giá trị lưu là tên tiếng Việt như bản gốc để dữ liệu cũ/mới thống nhất; nhãn hiển thị được dịch.
   const PHISHING = "Website giả mạo / đánh cắp đăng nhập";
-  const CATEGORIES = [
-    { value: PHISHING, label: () => Language.t("cat_phishing") },
-    ...SCAM_TYPES.map((t) => ({ value: t.name, label: () => Language.scamType(t.name) })),
-    { value: "Khác", label: () => Language.t("cat_other") },
-  ];
+  const CATEGORIES = [PHISHING, ...SCAM_TYPES, "Khác"];
+  function categoryLabel(value) {
+    if (value === PHISHING) return Language.t("cat_phishing");
+    if (value === "Khác") return Language.t("cat_other");
+    return Language.scamType(value);
+  }
+
   function renderCategories() {
     const selected = catEl.value;
-    catEl.innerHTML = CATEGORIES.map((c) => `<option value="${esc(c.value)}">${esc(c.label())}</option>`).join("");
-    if (selected) catEl.value = selected;
+    const options = CATEGORIES.map((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = categoryLabel(value);
+      return option;
+    });
+    catEl.replaceChildren(...options);
+    if (CATEGORIES.includes(selected)) catEl.value = selected;
+  }
+
+  function renderSavedReports() {
+    const saved = getReports();
+    const list = $("#savedReportsList");
+    list.replaceChildren();
+    if (Array.isArray(saved)) {
+      for (let i = saved.length - 1; i >= 0; i--) {
+        const report = saved[i];
+        if (typeof report?.target !== "string") continue;
+        const item = document.createElement("li");
+        const target = document.createElement("strong");
+        const text = document.createElement("p");
+        target.textContent = report.target;
+        text.textContent = [
+          typeof report.category === "string" ? categoryLabel(report.category) : "",
+          typeof report.desc === "string" ? report.desc : "",
+        ].filter(Boolean).join(" · ");
+        item.append(target, text);
+        list.append(item);
+      }
+    }
+    $("#savedReportsEmpty").hidden = list.childElementCount > 0;
+  }
+
+  function checkSubject() {
+    if (!urlEl.value.trim()) return "errUrlEmpty";
+    const url = UrlAnalyzer.parse(urlEl.value);
+    if (!url) return "errUrlInvalid";
+    return url.requestUrl ? null : "errUrlCredentials";
   }
 
   // ---------- Kiểm tra dữ liệu ----------
   const FIELDS = {
-    subject: { el: urlEl, check: () => (!urlEl.value.trim() ? "errUrlEmpty" : !UrlAnalyzer.parse(urlEl.value) ? "errUrlInvalid" : null) },
+    subject: { el: urlEl, check: checkSubject },
     desc: { el: descEl, check: () => (!descEl.value.trim() ? "errDescEmpty" : null) },
     commit: { el: commitEl, check: () => (commitEl.checked ? null : "errCommit") },
   };
@@ -74,6 +104,8 @@
     }
     form.reset();
     renderCategories();
+    renderSavedReports();
+    $("#savedReports").open = true;
     $("#reportSuccessScan").href = `index.html?scan=${encodeURIComponent(target)}`;
     success.hidden = false;
     success.focus();
@@ -86,7 +118,9 @@
 
   Language.onChange(() => {
     renderCategories();
+    renderSavedReports();
     Object.keys(FIELDS).forEach((n) => { if (errors[n]) setError(n, errors[n]); });
   });
   renderCategories();
+  renderSavedReports();
 })();

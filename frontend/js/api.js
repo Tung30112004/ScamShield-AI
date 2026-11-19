@@ -1,5 +1,5 @@
 // Kết nối tới backend model AI (FastAPI trong backend/src/main.py).
-// API: POST /predict, GET /health. Không phụ thuộc DOM.
+// API: POST /predict, GET /health, GET /stats. Không phụ thuộc DOM.
 //
 // Địa chỉ backend:
 //   - trang mở từ localhost / 127.0.0.1 / file:// → http://localhost:8000
@@ -13,6 +13,7 @@ const AiApi = (() => {
   // Máy chủ Render miễn phí có thể mất 30–60 giây để khởi động lại.
   const PREDICT_TIMEOUT = 90000;
   const HEALTH_TIMEOUT = 8000;
+  const STATS_TIMEOUT = 15000;
 
   function resolveBase() {
     try {
@@ -40,12 +41,20 @@ const AiApi = (() => {
     try {
       const res = await fetch(BASE + path, { ...opts, signal: ctrl.signal });
       let data = null;
-      try { data = await res.json(); } catch {}
+      try { data = await res.json(); } catch (e) {
+        if (e.name === "AbortError") throw e;
+      }
       if (!res.ok) {
         const detail = data && data.detail;
+        const fields = {
+          status: res.status,
+          detail,
+          backendCode: data?.error_code,
+          requestId: data?.request_id,
+        };
         throw typeof detail === "string"
-          ? apiError("detail", detail, { status: res.status, detail })
-          : apiError("http", `Máy chủ trả về lỗi HTTP ${res.status}`, { status: res.status });
+          ? apiError("detail", detail, fields)
+          : apiError("http", `Máy chủ trả về lỗi HTTP ${res.status}`, fields);
       }
       if (!data) throw apiError("invalid", "Dữ liệu trả về không hợp lệ.");
       return data;
@@ -70,21 +79,37 @@ const AiApi = (() => {
     return healthPromise;
   }
 
-  // Cache theo URL để trang tin nhắn / trang chủ không hỏi lại cùng một link.
+  const VERDICT_LEVELS = new Map([
+    ["Safe", "safe"], ["Phishing", "danger"], ["Phishing/Malicious", "danger"],
+    ["DomainNotFound", "unknown"],
+  ]);
+  function verdictLevel(data) {
+    return typeof data?.source === "string" && data.source.trim()
+      ? VERDICT_LEVELS.get(data.status) : undefined;
+  }
+
+  // Cache theo URL chính xác, vì path và query có thể phân biệt hoa/thường.
   const cache = new Map();
   function predict(url) {
-    const key = url.trim().toLowerCase();
+    const key = url.trim();
     if (!cache.has(key)) {
       const p = fetchJson("/predict", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim() }),
-      }, PREDICT_TIMEOUT);
+        body: JSON.stringify({ url: key }),
+      }, PREDICT_TIMEOUT).then((data) => {
+        if (!verdictLevel(data)) throw apiError("invalid", "Dữ liệu dự đoán không hợp lệ.");
+        return data;
+      });
       cache.set(key, p);
       p.catch(() => cache.delete(key)); // lỗi thì lần sau thử lại
     }
     return cache.get(key);
   }
 
-  return { BASE, health, predict };
+  function stats() {
+    return fetchJson("/stats", {}, STATS_TIMEOUT);
+  }
+
+  return { BASE, health, predict, stats, verdictLevel };
 })();

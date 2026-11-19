@@ -1,22 +1,15 @@
-// Bộ phân tích URL theo pipeline của dự án: chuẩn hoá → tách cấu trúc → trích đặc trưng (F1, F2, F4) → điểm + lý do.
-// Mỗi đặc trưng đóng góp một giá trị (thang log-odds) giống cách SHAP giải thích model, nên
-// khi có model thật chỉ cần thay nguồn `reasons` mà giao diện giữ nguyên.
-// Không phụ thuộc DOM – cần nạp dictionaries.js trước.
+// Bộ phân tích cấu trúc URL chạy cục bộ. Nạp dictionaries.js trước khi phân tích.
 
 const UrlAnalyzer = (() => {
-  const BIAS = -3.0; // xác suất nền ≈ 5%
-  const LEVELS = { danger: 0.7, warn: 0.35 };
   const POS_WEIGHT = { sub: 1.0, dom: 1.4, path: 0.7 };
-  const POS_NAME = { sub: "tên miền phụ", dom: "tên miền chính", path: "đường dẫn" };
-
-  const SUFFIXES = new Set(PUBLIC_SUFFIXES);
+  const SUFFIXES = new Set([...PUBLIC_SUFFIXES, ...HOSTING_PLATFORMS]);
   const KEYWORDS = new Map(SCAM_KEYWORDS.map((x) => [x.k, x]));
   const BRAND_KEYS = new Map();
   BRANDS_VN.forEach((b) => b.keys.forEach((k) => BRAND_KEYS.set(k, b)));
   const DICT = new Set([...KEYWORDS.keys(), ...BRAND_KEYS.keys(), ...COMMON_WORDS]);
   const MAX_WORD = Math.max(...[...DICT].map((w) => w.length));
-  const OFFICIAL = new Map();
-  BRANDS_VN.forEach((b) => b.domains.forEach((d) => OFFICIAL.set(d, b)));
+  const BRAND_DOMAINS = new Map();
+  BRANDS_VN.forEach((b) => b.domains.forEach((d) => BRAND_DOMAINS.set(d, b)));
 
   // Ký tự dễ nhầm: số thay chữ (vietc0mbank) và chữ Cyrillic/Hy Lạp trông giống Latin.
   const LOOKALIKE = { 0: "o", 1: "l", 3: "e", 4: "a", 5: "s", 7: "t", 8: "b",
@@ -28,10 +21,10 @@ const UrlAnalyzer = (() => {
   function punyDecode(input) {
     const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
     const adapt = (delta, num, first) => {
-      delta = first ? Math.floor(delta / damp) : delta >> 1;
+      delta = first ? Math.floor(delta / damp) : Math.floor(delta / 2);
       delta += Math.floor(delta / num);
       let k = 0;
-      while (delta > ((base - tMin) * tMax) >> 1) { delta = Math.floor(delta / (base - tMin)); k += base; }
+      while (delta > Math.floor(((base - tMin) * tMax) / 2)) { delta = Math.floor(delta / (base - tMin)); k += base; }
       return k + Math.floor(((base - tMin + 1) * delta) / (delta + skew));
     };
     const digitOf = (c) => (c >= 48 && c <= 57 ? c - 22 : c >= 97 && c <= 122 ? c - 97 : c >= 65 && c <= 90 ? c - 65 : base);
@@ -104,31 +97,58 @@ const UrlAnalyzer = (() => {
 
   // ---------- Chuẩn hoá + tách cấu trúc ----------
   function parse(input) {
-    let s = input.trim();
-    if (!s) return null;
-    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "http://" + s;
-    let u;
-    try { u = new URL(s); } catch { return null; }
-    const host = u.hostname.replace(/\.$/, "").replace(/^www\d?\./, "");
-    if (!host.includes(".") && !host.startsWith("[")) return null;
-    const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.startsWith("[");
-    const labels = host.split(".");
-    let suffix = labels[labels.length - 1];
+    if (typeof input !== "string" || /[\u0000-\u001f\u007f-\u009f]/u.test(input)) return null;
+    const raw = input.trim();
+    if (!raw || raw.length > 2048 || /[\s\\<>"'\uD800-\uDFFF]/u.test(raw)) return null;
+
+    const schemePrefix = /^https?:\/\//i.exec(raw)?.[0];
+    const bareHostWithPort = /^[^:/?#@]+\.[^:/?#@]+:\d+(?:[/?#]|$)/u.test(raw);
+    if (!schemePrefix && /^[a-z][a-z0-9+.-]*:/i.test(raw) && !bareHostWithPort) return null;
+    const candidate = schemePrefix ? raw : "http://" + raw;
+    // Use URL for validation, but keep the original path, query and explicit port.
+    const authority = /^https?:\/\/([^/?#]+)(.*)$/iu.exec(candidate);
+    if (!authority) return null;
+    const hostAndPort = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/u.exec(authority[1].split("@").at(-1));
+    if (!hostAndPort || hostAndPort[1].includes("%")) return null;
+    const [, rawHost, rawPort] = hostAndPort;
+    if (rawPort && (+rawPort < 1 || +rawPort > 65535)) return null;
+
+    let url;
+    try { url = new URL(candidate); } catch { return null; }
+    const host = url.hostname;
+    const dnsName = host.replace(/\.$/, "");
+    const ipv6 = host.startsWith("[");
+    const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+    if (ipv4 && rawHost !== host) return null; // Avoid alternative IPv4 forms.
+    const isIp = ipv4 || ipv6;
+    const labels = isIp ? [] : dnsName.split(".");
+    if (!isIp && (host.length > 253 || labels.length < 2 ||
+        labels.some((label) => !/^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/i.test(label)))) return null;
+
+    let suffix = "";
     for (let i = 1; i < labels.length; i++) {
-      const cand = labels.slice(i).join(".");
-      if (SUFFIXES.has(cand)) { suffix = cand; break; }
+      const candidateSuffix = labels.slice(i).join(".");
+      if (SUFFIXES.has(candidateSuffix)) { suffix = candidateSuffix; break; }
     }
-    const nSuffix = suffix.split(".").length;
-    const domLabel = isIp ? "" : labels[labels.length - nSuffix - 1] || "";
-    let path = u.pathname;
-    try { path = decodeURIComponent(path); } catch {}
+    const domainIndex = suffix ? labels.length - suffix.split(".").length - 1 : -1;
+    const domLabel = labels[domainIndex] || "";
+    const hasUserInfo = authority[1].includes("@");
+    // The Backend expects an ASCII hostname. Convert only an IDN host.
+    let requestUrl = /[^\x00-\x7f]/u.test(rawHost)
+      ? (schemePrefix || "") + host + (rawPort ? ":" + rawPort : "") + authority[2] : raw;
+    if (requestUrl.length > 2048) return null;
+    if (hasUserInfo) requestUrl = null;
+    const pathQuery = authority[2].split("#", 1)[0];
+    const queryStart = pathQuery.indexOf("?");
+    const path = queryStart < 0 ? pathQuery : pathQuery.slice(0, queryStart);
     return {
-      input: input.trim(), href: u.href, host, hostUnicode: toUnicode(host), isIp,
-      sub: isIp ? "" : labels.slice(0, Math.max(0, labels.length - nSuffix - 1)).join("."),
-      domLabel, suffix, tld: labels[labels.length - 1],
-      regDomain: isIp || !domLabel ? host : `${domLabel}.${suffix}`,
-      path: path === "/" ? "" : path, query: u.search, port: u.port,
-      hasUserInfo: Boolean(u.username || u.password),
+      host, dnsName, hostUnicode: toUnicode(host), isIp, scheme: url.protocol.slice(0, -1),
+      sub: domainIndex > 0 ? labels.slice(0, domainIndex).join(".") : "",
+      domLabel, suffix, tld: labels.at(-1) || "",
+      regDomain: domLabel ? domLabel + "." + suffix : null,
+      path: path === "/" ? "" : path, query: queryStart < 0 ? "" : pathQuery.slice(queryStart),
+      port: rawPort ? String(Number(rawPort)) : "", hasUserInfo, requestUrl,
+      inputLength: raw.length, comparisonUrl: requestUrl ? url.href : null,
     };
   }
 
@@ -149,108 +169,101 @@ const UrlAnalyzer = (() => {
   const endsWithDomain = (host, d) => host === d || host.endsWith("." + d);
 
   // ---------- Phân tích ----------
-  function analyze(input, opts = {}) {
+  function analyze(input) {
     const p = parse(input);
     if (!p) return { valid: false };
     const reasons = [];
-    const add = (id, group, value, text) => reasons.push({ id, group, value, text });
-
-    // Trang người dùng tự tạo (sites.google.com…) không được hưởng độ tin cậy của tên miền gốc.
-    const userContent = USER_CONTENT_HOSTS.some((h) => endsWithDomain(p.host, h));
-    const official = userContent ? null : OFFICIAL.get(p.regDomain);
+    const add = (id, group, value, details = {}) => reasons.push({ id, group, value, ...details });
+    const platform = HOSTING_PLATFORMS.find((host) => p.dnsName.endsWith("." + host));
+    const userContent = USER_CONTENT_HOSTS.find((host) => endsWithDomain(p.dnsName, host));
+    const reference = !platform && !userContent ? BRAND_DOMAINS.get(p.regDomain) : null;
     const domLabelU = toUnicode(p.domLabel);
 
-    // Danh sách đen / báo cáo cộng đồng
-    if ((opts.blacklist || []).some((d) => endsWithDomain(p.host, d)))
-      add("blacklisted", "Danh sách", 8, "Tên miền nằm trong danh sách đã bị báo cáo lừa đảo.");
-
-    // Whitelist
-    if (official)
-      add("official_domain", "Danh sách", -9, `Tên miền chính thức của ${official.name}.`);
-    else if (/^(gov|edu)\.vn$/.test(p.suffix))
-      add("gov_edu_vn", "F1", -1, `Đuôi .${p.suffix} chỉ cơ quan, trường học mới đăng ký được.`);
-
-    // F1 – cấu trúc
-    if (p.isIp) add("host_is_ip", "F1", 3, "Dùng địa chỉ IP thay cho tên miền.");
-    if (p.hasUserInfo) add("at_symbol", "F1", 2.5, "Có ký tự “@” trước tên miền – thủ thuật che giấu trang đích thật.");
-    if (TLD_RISK[p.tld]) add("tld_risk", "F1", TLD_RISK[p.tld], `Đuôi “.${p.tld}” thường bị lạm dụng cho trang lừa đảo.`);
-    if (SHORTENERS.includes(p.regDomain)) add("shortener", "F1", 2.5, "Link rút gọn – không thấy được trang đích thật.");
-    if (HOSTING_PLATFORMS.includes(p.suffix))
-      add("free_hosting", "F1", 1.2, `Trang tự tạo trên nền tảng miễn phí (${p.suffix}).`);
-    if (userContent) add("user_content", "F1", 1.5, `Trang do người dùng tự tạo trên ${p.host}, không phải trang của Google.`);
+    if (reference) add("brand_reference", "F4", 0, { brand: reference.name });
+    if (p.isIp) add("host_is_ip", "F1", 3);
+    if (p.scheme === "http") add("no_https", "F1", 0.7);
+    if (p.hasUserInfo) add("at_symbol", "F1", 2.5);
+    if (TLD_RISK.has(p.tld)) add("tld_risk", "F1", 0.3);
+    if (SHORTENERS.includes(p.dnsName)) add("shortener", "F1", 2.5);
+    if (platform || userContent) add("user_content", "F1", 0.4, { platform: platform || userContent });
     const subDepth = p.sub ? p.sub.split(".").length : 0;
-    if (subDepth >= 3) add("deep_subdomain", "F1", 1, `Có ${subDepth} cấp tên miền phụ lồng nhau.`);
+    if (subDepth >= 3) add("deep_subdomain", "F1", 1, { count: subDepth });
     if (/(^|\.)(com|net|org|gov|edu)(\.vn)?$/.test(p.sub) && subDepth >= 2)
-      add("domain_in_subdomain", "F1", 1.2, `Tên miền phụ “${p.sub}” giả dạng một tên miền hoàn chỉnh.`);
+      add("domain_in_subdomain", "F1", 1.2);
     const hyphens = (domLabelU.match(/-/g) || []).length;
-    if (hyphens >= 2) add("many_hyphens", "F1", 0.8, `Tên miền chính có ${hyphens} dấu gạch ngang.`);
+    if (hyphens >= 2) add("many_hyphens", "F1", 0.8, { count: hyphens });
     const digits = (domLabelU.match(/\d/g) || []).length;
-    if (domLabelU.length > 5 && digits / domLabelU.length > 0.3) add("digit_ratio", "F1", 0.6, "Tên miền chứa nhiều chữ số.");
-    if (p.host.length > 35) add("long_host", "F1", 0.6, `Tên miền dài bất thường (${p.host.length} ký tự).`);
-    if (!p.isIp && domLabelU.length >= 10 && entropy(domLabelU) > 3.5 && !segment(stripVi(domLabelU).replace(/[^a-z0-9]/g, "")).some((x) => x.known))
-      add("random_host", "F1", 0.6, "Tên miền trông như chuỗi ký tự ngẫu nhiên.");
-    if (p.port && !["80", "443"].includes(p.port)) add("odd_port", "F1", 0.8, `Dùng cổng lạ (:${p.port}).`);
-    if (p.input.length > 120) add("long_url", "F1", 0.4, `Đường link rất dài (${p.input.length} ký tự).`);
-    if (/https?(:|%3a)|www\./i.test(p.path + p.query)) add("embedded_url", "F1", 0.6, "Đường dẫn chứa một link khác (có thể chuyển hướng).");
+    if (domLabelU.length > 5 && digits / domLabelU.length > 0.3) add("digit_ratio", "F1", 0.6);
+    if (!p.isIp && p.host.length > 35) add("long_host", "F1", 0.6, { count: p.host.length });
+    if (domLabelU.length >= 10 && entropy(domLabelU) > 3.5 &&
+        !segment(stripVi(domLabelU).replace(/[^a-z0-9]/g, "")).some((x) => x.known))
+      add("random_host", "F1", 0.6);
+    if (p.port && !["80", "443"].includes(p.port)) add("odd_port", "F1", 0.8);
+    if (p.inputLength > 120) add("long_url", "F1", 0.4, { count: p.inputLength });
+    let pathQuery = p.path + " " + p.query;
+    try { pathQuery = decodeURIComponent(pathQuery); } catch {}
+    if (/https?(:|%3a)|www\./i.test(pathQuery)) add("embedded_url", "F1", 0.6);
 
-    // F2 – token theo vị trí
-    const tokens = [...tokenize(p.sub, "sub"), ...tokenize(p.domLabel, "dom"), ...tokenize(p.path + " " + p.query, "path")];
+    const tokens = [
+      ...tokenize(toUnicode(p.sub), "sub"), ...tokenize(domLabelU, "dom"),
+      ...tokenize(pathQuery, "path"),
+    ];
     const seenKw = new Set();
-    tokens.forEach((tk) => {
-      const kw = KEYWORDS.get(tk.t);
-      if (!tk.known || !kw || seenKw.has(tk.pos + kw.k) || official) return;
-      seenKw.add(tk.pos + kw.k);
-      add(`${tk.pos}:${kw.k}`, "F2", +(kw.w * POS_WEIGHT[tk.pos]).toFixed(2), `${POS_NAME[tk.pos][0].toUpperCase() + POS_NAME[tk.pos].slice(1)} chứa từ khoá “${kw.t}”.`);
-    });
-
-    // F4 – giả mạo thương hiệu
-    if (!official && !p.isIp) {
-      const brandHits = new Map();
-      tokens.forEach((tk) => {
-        const b = tk.known && BRAND_KEYS.get(tk.t);
-        if (!b || b === OFFICIAL.get(p.regDomain) || (tk.t.length <= 4 && !tk.isolated)) return;
-        const order = { dom: 3, sub: 2, path: 1 };
-        if (!brandHits.has(b) || order[tk.pos] > order[brandHits.get(b)]) brandHits.set(b, tk.pos);
-      });
-      brandHits.forEach((pos, b) => {
-        const off = b.domains[0];
-        if (pos === "path") add("brand_in_path", "F4", 1.2, `Đường dẫn nhắc tới ${b.name} nhưng trang không thuộc ${off}.`);
-        else add("brand_outside_regdomain", "F4", 3.5, `Tên ${b.name} xuất hiện ở ${POS_NAME[pos]}, nhưng tên miền chính lại là “${p.regDomain}” (trang thật: ${off}).`);
-      });
-
-      // Ký tự giống nhau / gõ sai chính tả thương hiệu (typosquatting)
-      const uni = stripVi(p.hostUnicode).split(".");
-      const nSuffix = p.suffix.split(".").length;
-      const chunks = uni.slice(0, uni.length - nSuffix).flatMap((l) => l.split("-")).filter((c) => c.length >= 4);
-      let squat = null;
-      chunks.forEach((c) => {
-        const plain = unLookalike(c);
-        BRANDS_VN.forEach((b) => b.keys.forEach((k) => {
-          if (k.length < 4 || brandHits.has(b) || squat) return;
-          if (plain !== c && plain === k) squat = { b, c, kind: "lookalike" };
-          else if (k.length >= 6 && c !== k) {
-            const d = editDistance(plain, k);
-            if (d >= 1 && d <= (k.length >= 9 ? 2 : 1)) squat = { b, c, kind: "typo" };
-          }
-        }));
-      });
-      if (squat?.kind === "lookalike")
-        add("homoglyph", "F4", 4.5, `“${squat.c}” dùng ký tự trông giống chữ cái để giả “${squat.b.keys[0]}” (${squat.b.name}).`);
-      else if (squat)
-        add("typosquat", "F4", 3.5, `“${squat.c}” viết gần giống “${squat.b.keys[0]}” (${squat.b.name}) – kiểu gõ sai cố ý.`);
+    for (const token of tokens) {
+      const kw = KEYWORDS.get(token.t);
+      const id = token.pos + ":" + token.t;
+      if (!token.known || !kw || seenKw.has(id)) continue;
+      seenKw.add(id);
+      add(id, "F2", kw.w * POS_WEIGHT[token.pos], { position: token.pos, keyword: kw.t, term: kw.k });
     }
-    if (p.host.includes("xn--"))
-      add("punycode", "F4", 2, `Tên miền dùng ký tự quốc tế (punycode), hiển thị thật là “${p.hostUnicode}”.`);
 
-    // Tổng hợp
-    reasons.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
-    const logit = BIAS + reasons.reduce((s, r) => s + r.value, 0);
-    const prob = 1 / (1 + Math.exp(-logit));
-    const level = prob >= LEVELS.danger ? "danger" : prob >= LEVELS.warn ? "warn" : "safe";
-    return { valid: true, parsed: p, tokens, reasons, bias: BIAS, prob, score: Math.round(prob * 100), level, label: level === "safe" ? "safe" : "scam" };
+    // Compare brands only when the local suffix list recognizes the domain boundary.
+    if (p.regDomain) {
+      const brandHits = new Map();
+      const positionRank = { dom: 3, sub: 2, path: 1 };
+      for (const token of tokens) {
+        const brand = token.known && BRAND_KEYS.get(token.t);
+        if (!brand || brand === reference || (token.t.length <= 4 && !token.isolated)) continue;
+        if (!brandHits.has(brand) || positionRank[token.pos] > positionRank[brandHits.get(brand)])
+          brandHits.set(brand, token.pos);
+      }
+      for (const [brand, pos] of brandHits) {
+        add(pos === "path" ? "brand_in_path" : "brand_outside_regdomain", "F4",
+            pos === "path" ? 0.8 : 3.5,
+            { brand: brand.name, position: pos, referenceDomain: brand.domains[0] });
+      }
+
+      const chunks = stripVi([toUnicode(p.sub), domLabelU].filter(Boolean).join("."))
+        .split(/[.-]/).filter((label) => label.length >= 4);
+      for (const chunk of chunks) {
+        const plain = unLookalike(chunk);
+        let match = null;
+        for (const brand of BRANDS_VN) {
+          if (brand === reference || brandHits.has(brand)) continue;
+          for (const key of brand.keys) {
+            if (key.length < 4) continue;
+            if (plain !== chunk && plain === key)
+              match = { id: "homoglyph", brand: brand.name, term: key, observed: chunk };
+            else if (!match && key.length >= 6 && key !== plain && Math.abs(plain.length - key.length) <= 1 &&
+                     editDistance(plain, key) === 1)
+              match = { id: "typosquat", brand: brand.name, term: key, observed: chunk };
+          }
+        }
+        if (match) {
+          add(match.id, "F4", match.id === "homoglyph" ? 4.5 : 3, match);
+          break;
+        }
+      }
+    }
+    if (p.dnsName.split(".").some((label) => label.startsWith("xn--")))
+      add("punycode", "F4", 0);
+
+    reasons.sort((a, b) => b.value - a.value);
+    const riskSignalScore = Math.round(reasons.reduce((sum, signal) => sum + signal.value, 0) * 100) / 100;
+    return { valid: true, parsed: p, reasons, riskSignalScore, hasRiskSignals: riskSignalScore >= 2 };
   }
 
-  return { analyze, parse, segment, toUnicode, LEVELS };
+  return { analyze, parse };
 })();
 
 if (typeof module !== "undefined") module.exports = UrlAnalyzer;
