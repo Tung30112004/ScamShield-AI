@@ -28,6 +28,7 @@ from features import (extract_features, registrable_domain, get_advanced_insight
                       load_tokenizer_json, texts_to_char_sequences, pad_post, FEATURE_NAMES,
                       skeletonize, f2_doc)
 from tfidf_compat import repair_tfidf_idf
+import env_config  # noqa: F401 — nạp .env (local) trước khi đọc URLHAUS_API_KEY / GOOGLE_SAFE_BROWSING_API_KEY
 from database import check_url_in_db
 from domain_info import get_domain_info, resolve_dns
 

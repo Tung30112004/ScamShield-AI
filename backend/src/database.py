@@ -1,21 +1,40 @@
-import os
 from supabase import create_client, Client
-from dotenv import load_dotenv
+
+from env_config import get_supabase_config, supabase_key_kind
 
 # --- 1. LOAD CẤU HÌNH BIẾN MÔI TRƯỜNG ---
-load_dotenv()
+# SUPABASE_URL / SUPABASE_KEY (tên cũ EXPO_PUBLIC_SUPABASE_* vẫn được đọc), xem env_config.py
+SUPABASE_URL, SUPABASE_KEY = get_supabase_config()
 
-SUPABASE_URL = os.getenv("EXPO_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("EXPO_PUBLIC_SUPABASE_KEY")
+# supabase-py 2.34 (postgrest 2.x) mặc định chờ 120s/truy vấn và tự retry 3 lần
+# (nghỉ 1+2+4s) khi lỗi mạng hoặc 503/520 -> /predict treo 7-15s, thậm chí vài phút,
+# khi Supabase lỗi. Giữ hành vi fail-soft như bản 2.3.0: tối đa 5s, không retry.
+# Backend không đăng nhập người dùng nên tắt luôn refresh/persist session.
+# (Import/tạo trong khối try bên dưới: supabase-py cũ (2.3.0) không có ClientOptions ở
+#  cấp gói / không có tham số retry -> chỉ tắt tầng DB, backend vẫn khởi động.)
+DB_CLIENT_OPTIONS = dict(
+    postgrest_client_timeout=5,
+    postgrest_client_retry=False,
+    auto_refresh_token=False,
+    persist_session=False,
+)
 
 # --- 2. KHỞI TẠO KẾT NỐI ---
 try:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("⚠️ CẢNH BÁO: Chưa cấu hình SUPABASE_URL hoặc SUPABASE_KEY trong .env")
+        missing = [n for n, v in (("SUPABASE_URL", SUPABASE_URL), ("SUPABASE_KEY", SUPABASE_KEY)) if not v]
+        print(f"⚠️ CẢNH BÁO: Chưa cấu hình {', '.join(missing)} — bỏ qua tra cứu Database Supabase")
         supabase: Client = None
     else:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✅ Kết nối Database Supabase thành công!")
+        from supabase import ClientOptions
+
+        key_kind = supabase_key_kind(SUPABASE_KEY)
+        if key_kind in ("secret", "service_role"):
+            print(f"⚠️ CẢNH BÁO: SUPABASE_KEY là key quyền cao ({key_kind}) — backend chỉ cần quyền đọc, "
+                  "nên dùng key sb_publishable_…")
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY,
+                                         options=ClientOptions(**DB_CLIENT_OPTIONS))
+        print(f"✅ Kết nối Database Supabase thành công! (key: {key_kind})")
 except Exception as e:
     print(f"❌ Lỗi kết nối Database: {e}")
     supabase = None
